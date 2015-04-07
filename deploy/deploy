@@ -1,0 +1,275 @@
+#!/bin/bash
+
+set -e
+
+: "${NODE_ENV:="staging"}"
+
+# PRIMAL_ID="ami-xxxxxxxx"
+# IMAGE_ID="ami-xxxxxxxx"
+# CLEANUP="no"
+INSTANCE_TYPE="t1.micro"
+INSTANCE_USER="admin"
+SECURITY_GROUP="standard"
+MIN_CAPACITY="1"
+MAX_CAPACITY="3"
+DESIRED_CAPACITY="1"
+
+timestamp () {
+  date +"%Y%m%d%H%M%S"
+}
+
+zzz () {
+  sleep 2
+  printf "."
+}
+
+build_app () {
+  echo "deploy: building app for $NODE_ENV environment"
+  npm run build-$NODE_ENV
+}
+
+copy_over () {
+  echo "deploy: copying files over to tmp/appserver"
+  rm -rf tmp/appserver
+  mkdir -p tmp/appserver/deploy/env
+  cp -r {.bin,client,controllers,data,lib,models,resources,services,test,views,.env.browser.json,.env.defaults.json,.taunusrc,*.js,package.json} tmp/appserver
+  cp "deploy/env/$NODE_ENV.json" tmp/appserver/deploy/env
+}
+
+build_primal_image () {
+  echo "deploy: building primal image with packer..."
+
+  cp package.json deploy/mailtube
+  packer build \
+    deploy/templates/primal.json | tee deploy/log/packer-primal.log
+
+  PRIMAL_ID=$(tail -1 < deploy/log/packer-primal.log | cut -d ' ' -f 2)
+
+  echo "deploy: built image $PRIMAL_ID"
+}
+
+build_deployment_image () {
+  echo "deploy: building carnivore image with packer..."
+
+  packer build \
+    -var NODE_ENV=$NODE_ENV \
+    -var SOURCE_ID=$PRIMAL_ID \
+    deploy/templates/carnivore.json | tee deploy/log/packer-carnivore.log
+
+  IMAGE_ID=$(tail -1 < deploy/log/packer-carnivore.log | cut -d ' ' -f 2)
+
+  echo "deploy: built image $IMAGE_ID"
+}
+
+maybe_build_primal_image () {
+  if [ -z ${PRIMAL_ID+x} ]
+  then
+    build_primal_image
+  else
+    echo "deploy: skipping primal image build, using $PRIMAL_ID"
+  fi
+}
+
+maybe_build_deployment_image () {
+  if [ -z ${IMAGE_ID+x} ]
+  then
+    build_app
+    copy_over
+    build_deployment_image
+  else
+    CLEANUP="no"
+    echo "deploy: skipping deployment image build, using $IMAGE_ID"
+  fi
+}
+
+lookup_existing_asg () {
+  echo "deploy: pulling down list of existing autoscaling groups..."
+  aws autoscaling describe-auto-scaling-groups > deploy/log/asg-list.log
+
+  echo "deploy: pulling down list of existing launch configurations..."
+  aws autoscaling describe-launch-configurations > deploy/log/asg-lc.log
+
+  EXISTING_GROUP_NAMES=$(underscore process --outfmt text "data.AutoScalingGroups.filter(function (asg) {
+    return asg.AutoScalingGroupName.indexOf(\"asg-$NAME\") === 0
+  }).map(function (asg) {
+    return asg.AutoScalingGroupName
+  })" < deploy/log/asg-list.log)
+
+  EXISTING_LAUNCH_CONFIGURATIONS=$(underscore process --outfmt text "data.LaunchConfigurations.filter(function (lc) {
+    return lc.LaunchConfigurationName.indexOf(\"lc-$NAME\") === 0
+  }).map(function (lc) {
+    return lc.LaunchConfigurationName
+  })" < deploy/log/asg-lc.log)
+
+  if [ "$EXISTING_GROUP_NAMES" != "" ]
+  then
+    echo "$EXISTING_GROUP_NAMES" > deploy/log/asg-existing-group-names.log
+  else
+    touch deploy/log/asg-existing-group-names.log
+  fi
+
+  if [ "$EXISTING_LAUNCH_CONFIGURATIONS" != "" ]
+  then
+    echo "$EXISTING_LAUNCH_CONFIGURATIONS" > deploy/log/asg-existing-lc.log
+  else
+    touch deploy/log/asg-existing-lc.log
+  fi
+}
+
+launch_updated_asg () {
+  echo "deploy: describing elb to get availability zones..."
+  aws elb describe-load-balancers \
+    --load-balancer-name "$ELB_NAME" > deploy/log/elb-describe-lb.log
+
+  AVAILABILITY_ZONES=$(jq -r ".LoadBalancerDescriptions[0].AvailabilityZones[]?" < deploy/log/elb-describe-lb.log)
+
+  echo "deploy: creating $LC_NAME using the latest image..."
+  aws autoscaling create-launch-configuration \
+    --launch-configuration-name "$LC_NAME" \
+    --image-id "$IMAGE_ID" \
+    --instance-type "$INSTANCE_TYPE" \
+    --key-name "$NAME" \
+    --security-groups "$SECURITY_GROUP" > deploy/log/asg-lc-creation.log
+
+  echo "deploy: creating $ASG_NAME autoscaling group..."
+  aws autoscaling create-auto-scaling-group \
+    --auto-scaling-group-name "$ASG_NAME" \
+    --launch-configuration-name "$LC_NAME" \
+    --availability-zones $AVAILABILITY_ZONES \
+    --health-check-type "ELB" \
+    --health-check-grace-period 300 \
+    --load-balancer-names "$ELB_NAME" \
+    --min-size "$MIN_CAPACITY" \
+    --max-size "$MAX_CAPACITY" \
+    --desired-capacity "$DESIRED_CAPACITY" \
+    --tags "ResourceId=$ASG_NAME,Key=Name,Value=$NAME ResourceId=$ASG_NAME,Key=Role,Value=web" > deploy/log/asg-create-group.log
+}
+
+wait_on_health () {
+  EC2_HEALTH="0"
+  while [ "$EC2_HEALTH" != "$DESIRED_CAPACITY" ]
+  do
+    printf "deploy: ensuring new instance(s) are healthy at ec2"
+    zzz;zzz
+    aws autoscaling describe-auto-scaling-groups \
+      --auto-scaling-group-names "$ASG_NAME" > deploy/log/asg-description.log
+
+    EC2_HEALTH=$(underscore process --outfmt text "data.AutoScalingGroups[0].Instances.filter(function (i) {
+      return i.LifecycleState === 'InService' && i.HealthStatus === 'Healthy'
+    }).length" < deploy/log/asg-description.log)
+
+    echo " ($EC2_HEALTH/$DESIRED_CAPACITY are healthy)"
+  done
+
+  ELB_INSTANCES=$(jq -r '.AutoScalingGroups[0].Instances[]?.InstanceId' < deploy/log/asg-description.log)
+  ELB_HEALTH="0"
+  while [ "$ELB_HEALTH" != "$DESIRED_CAPACITY" ]
+  do
+    printf "deploy: ensuring new instance(s) are healthy at elb"
+    zzz;zzz
+    aws elb describe-instance-health \
+      --load-balancer-name "$ELB_NAME" \
+      --instances $ELB_INSTANCES  > deploy/log/elb-health-description.log
+
+    ELB_HEALTH=$(underscore process --outfmt text "data.InstanceStates.filter(function (s) {
+      return s.State === 'InService'
+    }).length" < deploy/log/elb-health-description.log)
+
+    echo " ($ELB_HEALTH/$DESIRED_CAPACITY are healthy)"
+  done
+}
+
+cleanup_outdated_autoscaling_groups () {
+  while read EXISTING_GROUP_NAME
+  do
+    ASG_INSTANCES=$(underscore process --outfmt text "data.AutoScalingGroups.filter(function (asg,i) {
+      return asg.AutoScalingGroupName === \"$EXISTING_GROUP_NAME\"
+    }).shift().Instances.map(function (i) {
+      return i.InstanceId
+    })" < deploy/log/asg-list.log)
+
+    echo "deploy: removing instances in outdated $EXISTING_GROUP_NAME from $ELB_NAME..."
+    aws elb deregister-instances-from-load-balancer \
+      --load-balancer-name $ELB_NAME \
+      --instances $ASG_INSTANCES > deploy/log/elb-deregister.log
+
+    echo "deploy: downscaling outdated $EXISTING_GROUP_NAME..."
+    aws autoscaling update-auto-scaling-group \
+      --auto-scaling-group-name $EXISTING_GROUP_NAME \
+      --max-size 0 \
+      --min-size 0 > deploy/log/asg-downscale.log
+
+    OPERATIONAL="1"
+    while [ "$OPERATIONAL" != "0" ]
+    do
+      printf "deploy: ensuring outdated instance(s) are terminated"
+      zzz;zzz
+      aws autoscaling describe-auto-scaling-groups \
+        --auto-scaling-group-names "$EXISTING_GROUP_NAME" > deploy/log/asg-existing-description.log
+
+      OPERATIONAL=$(underscore process --outfmt text "data.AutoScalingGroups.filter(function (asg) {
+        return asg.AutoScalingGroupName === \"$EXISTING_GROUP_NAME\"
+      }).shift().Instances.length" < deploy/log/asg-existing-description.log)
+
+      echo " ($OPERATIONAL are operational)"
+   done
+
+    echo "deploy: deleting outdated $EXISTING_GROUP_NAME..."
+    aws autoscaling delete-auto-scaling-group \
+      --auto-scaling-group-name $EXISTING_GROUP_NAME || echo "deploy: delete failed. maybe it's already deleted."
+  done < deploy/log/asg-existing-group-names.log
+
+  while read EXISTING_LC_NAME
+  do
+    echo "deploy: removing outdated launch configuration $EXISTING_LC_NAME..."
+    aws autoscaling delete-launch-configuration \
+      --launch-configuration-name "$EXISTING_LC_NAME" >> deploy/log/asg-lc-deletion.log || echo "deploy: delete failed. maybe it's already deleted."
+  done < deploy/log/asg-existing-lc.log
+}
+
+cleanup_deployment_image () {
+  if [ "$CLEANUP" != "no" ]
+  then
+    SNAPSHOT_ID=$(aws ec2 describe-images \
+      --image-ids $IMAGE_ID \
+      | jq -r .Images[0].BlockDeviceMappings[0].Ebs.SnapshotId)
+
+    echo "deploy: deregistering deployment image $IMAGE_ID"
+    aws ec2 deregister-image --image-id $IMAGE_ID
+
+    echo "deploy: deleting snapshot $SNAPSHOT_ID"
+    aws ec2 delete-snapshot --snapshot-id $SNAPSHOT_ID
+  fi
+}
+
+validate () {
+  if ! hash jq 2>/dev/null
+  then
+    echo "deploy: you need to install jq\n  brew install jq"
+    exit
+  fi
+
+  if [ ! -f ~/.aws/config ]
+  then
+    echo "deploy: you need to install awscli and configure it\!\n  pip install awscli\n  aws configure"
+    exit
+  fi
+}
+
+STAMP="$(timestamp)"
+NAME="baal-$NODE_ENV"
+ELB_NAME="elb-$NAME"
+KEYFILE="deploy/keys/$NODE_ENV"
+ASG_NAME="asg-$NAME-$STAMP"
+LC_NAME="lc-$NAME-$STAMP"
+
+rm -rf deploy/log
+mkdir deploy/log
+validate
+maybe_build_primal_image
+maybe_build_deployment_image
+lookup_existing_asg
+launch_updated_asg
+wait_on_health
+cleanup_outdated_autoscaling_groups
+cleanup_deployment_image

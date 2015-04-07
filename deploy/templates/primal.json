@@ -1,0 +1,28 @@
+{
+  "variables": {
+    "INSTANCE_USER": "admin",
+    "NVM_VERSION": "v0.24.0",
+    "NODE_VERSION": "0.10"
+  },
+  "builders": [{
+    "type": "amazon-ebs",
+    "region": "us-east-1",
+    "source_ami": "ami-22de994a",
+    "instance_type": "t1.micro",
+    "ssh_username": "{{user `INSTANCE_USER`}}",
+    "ami_name": "baal-primal {{timestamp}}"
+  }],
+  "provisioners": [{
+    "type": "file",
+    "source": "deploy/mailtube",
+    "destination": "/tmp/mailtube"
+  }, {
+    "type": "shell",
+    "environment_vars": [
+      "INSTANCE_USER={{user `INSTANCE_USER`}}",
+      "NVM_VERSION={{user `NVM_VERSION`}}",
+      "NODE_VERSION={{user `NODE_VERSION`}}"
+    ],
+    "script": "deploy/templates/primal"
+  }]
+}

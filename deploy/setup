@@ -1,0 +1,94 @@
+#!/bin/bash
+
+set -e
+
+: "${NODE_ENV:="staging"}"
+
+TLD="baal.com"
+NAME="baal-$NODE_ENV"
+ELB_NAME="elb-$NAME"
+ASG_NAME="asg-$NAME"
+LC_NAME="lc-$NAME-initial"
+KEYFILE="deploy/keys/$NODE_ENV"
+
+HOSTED_ZONE="XXXXXXXXXXXXXX"
+HOST_NAME=$NODE_ENV"."
+AVAILABILITY_ZONES="us-east-1a us-east-1b"
+
+if [ "$HOST_NAME" == "production." ]
+then
+  HOST_NAME=""
+fi
+
+if ! hash jq 2>/dev/null
+then
+  echo "deploy: you need to install jq\n  brew install jq"
+  exit
+fi
+
+if [ ! -f ~/.aws/config ]
+then
+  echo "deploy: you need to install awscli and configure it\!\n  pip install awscli\n  aws configure"
+  exit
+fi
+
+rm -rf deploy/log
+mkdir deploy/log
+
+echo "setup: creating $ELB_NAME load balancer ($AVAILABILITY_ZONES)..."
+aws elb create-load-balancer \
+  --load-balancer-name "$ELB_NAME" \
+  --listeners Protocol=HTTP,LoadBalancerPort=80,InstanceProtocol=HTTP,InstancePort=80 \
+  --availability-zones $AVAILABILITY_ZONES > deploy/log/elb-create.log
+
+echo "setup: enabling connection draining on elb..."
+aws elb modify-load-balancer-attributes \
+  --load-balancer-name "$ELB_NAME" \
+  --load-balancer-attributes "{\"ConnectionDraining\":{\"Enabled\":true,\"Timeout\":300}}" > deploy/log/elb-draining.log
+
+echo "setup: configuring health checks on elb..."
+aws elb configure-health-check \
+  --load-balancer-name "$ELB_NAME" \
+  --health-check Target=HTTP:80/api/status/health,Interval=30,UnhealthyThreshold=2,HealthyThreshold=2,Timeout=4 > deploy/log/elb-health.log
+
+echo "setup: describing load balancer to create route53 alias recordset..."
+aws elb describe-load-balancers \
+  --load-balancer-name "$ELB_NAME" > deploy/log/elb-describe-lb.log
+
+ELB_ZONE_ID=$(jq -r '.LoadBalancerDescriptions[0].CanonicalHostedZoneNameID' < deploy/log/elb-describe-lb.log)
+ELB_ZONE_NAME=$(jq -r '.LoadBalancerDescriptions[0].CanonicalHostedZoneName' < deploy/log/elb-describe-lb.log)
+
+echo "setup: creating route53 alias recordset on $HOST_NAME$TLD..."
+echo "{
+  \"Changes\": [{
+    \"Action\": \"UPSERT\",
+    \"ResourceRecordSet\": {
+      \"Type\": \"A\",
+      \"Name\": \"$HOST_NAME$TLD.\",
+      \"AliasTarget\": {
+        \"HostedZoneId\": \"$ELB_ZONE_ID\",
+        \"DNSName\": \"$ELB_ZONE_NAME\",
+        \"EvaluateTargetHealth\": true
+      }
+    }
+  }]
+}" > deploy/log/route53-record-set-changes.log
+
+aws route53 change-resource-record-sets \
+  --hosted-zone-id "$HOSTED_ZONE" \
+  --change-batch "file://deploy/log/route53-record-set-changes.log" > deploy/log/route53-change-recordset.log
+
+if [ -f "$KEYFILE" ]
+then
+  echo "setup: ssh key file already exists on aws."
+else
+  echo "setup: ssh key file doesn't exist yet. creating..."
+  mkdir -p deploy/keys
+  ssh-keygen -t rsa -b 4096 -N "" -f "$KEYFILE"
+  aws ec2 import-key-pair \
+    --key-name "$NAME" \
+    --public-key-material "file://$KEYFILE.pub" > deploy/log/ec2-upload-keypair.log
+  echo "setup: ssh key file uploaded to aws."
+fi
+
+echo "setup: done."

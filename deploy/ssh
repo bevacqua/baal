@@ -1,0 +1,12 @@
+#!/bin/bash
+
+: "${NODE_ENV:="staging"}"
+
+NAME="baal-$NODE_ENV"
+KEYFILE="deploy/keys/$NODE_ENV"
+INSTANCE_USER="admin"
+PUBLIC_DNS=$(aws ec2 describe-instances \
+  --filters "Name=tag:Name,Values=$NAME" \
+  | jq -r ".Reservations[0].Instances[0].PublicDnsName")
+
+ssh -i $KEYFILE -o StrictHostKeyChecking=no $INSTANCE_USER@$PUBLIC_DNS

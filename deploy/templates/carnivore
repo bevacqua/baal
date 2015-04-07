@@ -1,0 +1,45 @@
+#!/bin/bash
+
+echo "packer: sourcing nvm"
+. ~/.nvm/nvm.sh
+
+echo "packer: updating nginx configuration"
+cp -r ~/app/mailtube/nginx ~/app/nginx
+
+sed -i "s#{NGINX_USER}#$INSTANCE_USER#g" ~/app/nginx/nginx.conf
+sed -i "s#{NGINX_WORKERS}#$NGINX_WORKERS#g" ~/app/nginx/nginx.conf
+sed -i "s#{SERVER_NAME}#$SERVER_NAME#g" ~/app/nginx/site.conf
+sed -i "s#{STATIC_ROOT}#$HOME/app/server/.bin/public#g" ~/app/nginx/site.conf
+
+sudo ln -sfn ~/app/nginx/nginx.conf /etc/nginx/nginx.conf
+sudo ln -sfn ~/app/nginx/site.conf /etc/nginx/sites-enabled/$NAME.conf
+sudo rm /etc/nginx/sites-enabled/default
+
+sudo service nginx restart || sudo service nginx start || (sudo cat /var/log/nginx/error.log && exit 1)
+
+echo "packer: moving uploaded server code"
+mv /tmp/appserver ~/app/server
+
+echo "packer: installing server dependencies"
+mv ~/app/server/deploy/env/$NODE_ENV.json ~/app/server/.env.json
+mv ~/app/precache/node_modules ~/app/server/node_modules
+npm install --prefix ~/app/server --production
+
+echo "packer: installing appserver daemon..."
+echo "#!/bin/bash" > ~/app/start
+echo ". ~/.nvm/nvm.sh" >> ~/app/start
+echo "node ~/app/server/cluster.js" >> ~/app/start
+chmod +x ~/app/start
+cp ~/app/mailtube/init.d/appserver.conf ~/app/$NAME.conf
+sed -i "s#{NAME}#$NAME#g" ~/app/$NAME.conf
+sed -i "s#{DESCRIPTION}#Web application daemon service for $NAME#g" ~/app/$NAME.conf
+sed -i "s#{USER}#$INSTANCE_USER#g" ~/app/$NAME.conf
+sed -i "s#{COMMAND}#$HOME/app/start#g" ~/app/$NAME.conf
+sudo mv ~/app/$NAME.conf /etc/init.d/$NAME
+sudo chmod +x /etc/init.d/$NAME
+sudo touch /var/log/$NAME.log
+sudo chown $INSTANCE_USER /var/log/$NAME.log
+sudo update-rc.d $NAME defaults
+
+echo "packer: booting appserver daemon..."
+sudo service $NAME start

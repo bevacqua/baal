@@ -1,0 +1,13 @@
+#!/bin/bash
+
+: "${NODE_ENV:="staging"}"
+
+TLD="baal.com"
+HOST_NAME=$NODE_ENV"."
+
+if [ "$HOST_NAME" == "production." ]
+then
+  HOST_NAME=""
+fi
+
+open http://$HOST_NAME$TLD

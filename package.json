@@ -1,0 +1,17 @@
+{
+  "name": "baal",
+  "version": "1.0.0",
+  "description": "Automated, autoscaled, zero-downtime, immutable deployments using plain old bash, Packer, nginx, Node.js, and AWS. Made easy.",
+  "scripts": {
+    "setup": "deploy/setup",
+    "deploy": "deploy/deploy",
+    "ssh": "deploy/ssh",
+    "open": "deploy/open",
+    "shutdown": "deploy/shutdown",
+  },
+  "dependencies": {
+  },
+  "devDependencies": {
+    "underscore-cli": "^0.2.18"
+  }
+}

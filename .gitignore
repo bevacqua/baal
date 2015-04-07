@@ -1,0 +1,7 @@
+deploy/env/
+deploy/keys/
+deploy/log/
+deploy/mailtube/package.json
+node_modules/
+npm-debug.log
+tmp/

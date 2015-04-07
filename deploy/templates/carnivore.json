@@ -1,0 +1,32 @@
+{
+  "variables": {
+    "NODE_ENV": "staging",
+    "SERVER_NAME": "baal.com",
+    "INSTANCE_USER": "admin",
+    "NGINX_WORKERS": "4",
+    "SOURCE_ID": null
+  },
+  "builders": [{
+    "type": "amazon-ebs",
+    "region": "us-east-1",
+    "instance_type": "t1.micro",
+    "ssh_username": "{{user `INSTANCE_USER`}}",
+    "ami_name": "baal-carnivore-{{user `NODE_ENV`}} {{timestamp}}",
+    "source_ami": "{{user `SOURCE_ID`}}"
+  }],
+  "provisioners": [{
+    "type": "file",
+    "source": "tmp/appserver",
+    "destination": "/tmp/appserver"
+  }, {
+    "type": "shell",
+    "environment_vars": [
+      "INSTANCE_USER={{user `INSTANCE_USER`}}",
+      "NGINX_WORKERS={{user `NGINX_WORKERS`}}",
+      "SERVER_NAME={{user `SERVER_NAME`}}",
+      "NODE_ENV={{user `NODE_ENV`}}",
+      "NAME=baal-{{user `NODE_ENV`}}"
+    ],
+    "script": "deploy/templates/carnivore"
+  }]
+}
