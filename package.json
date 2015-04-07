@@ -7,7 +7,7 @@
     "deploy": "deploy/deploy",
     "ssh": "deploy/ssh",
     "open": "deploy/open",
-    "shutdown": "deploy/shutdown",
+    "shutdown": "deploy/shutdown"
   },
   "dependencies": {
   },
