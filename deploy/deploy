@@ -142,7 +142,7 @@ launch_updated_asg () {
     --min-size "$MIN_CAPACITY" \
     --max-size "$MAX_CAPACITY" \
     --desired-capacity "$DESIRED_CAPACITY" \
-    --tags "ResourceId=$ASG_NAME,Key=Name,Value=$NAME ResourceId=$ASG_NAME,Key=Role,Value=web" > deploy/log/asg-create-group.log
+    --tags ResourceId=$ASG_NAME,Key=Name,Value=$NAME ResourceId=$ASG_NAME,Key=Role,Value=web > deploy/log/asg-create-group.log
 }
 
 wait_on_health () {
