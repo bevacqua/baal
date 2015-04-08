@@ -9,10 +9,23 @@ Read about this deployment strategy on [Pony Foo][1], and then clone this reposi
 - In the `deploy` script you can set `PRIMAL_ID` to an AMI so that your base AMI isn't rebuilt on every deploy
 - By default, `baal` expects to build your static assets with `npm run build-$NODE_ENV`
 
+# reading
+
 Relevant [Pony Foo][1] articles:
 
 - [Immutable Deployments and Packer][2]
 - [Leveraging Immutable Deployments][3]
+
+# requirements
+
+You'll need to install all of the following.
+
+```bash
+pip install awscli
+aws configure
+brew install jq
+npm install underscore-cli --save-dev
+```
 
 # license
 
