@@ -1,4 +1,4 @@
-# baal
+# baal: build. automate. autoscale. launch.
 
 > Automated, autoscaled, zero-downtime, immutable deployments using plain old bash, Packer, nginx, Node.js, and AWS. Made easy.
 
