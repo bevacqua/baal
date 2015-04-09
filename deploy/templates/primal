@@ -25,6 +25,7 @@ echo '[[ -s $HOME/.nvm/nvm.sh ]] && . $HOME/.nvm/nvm.sh' >> ~/.bashrc
 
 echo "packer: tweaking tcp"
 sudo sysctl -w net.ipv4.tcp_slow_start_after_idle=0
+sudo sysctl -w net.ipv4.tcp_window_scaling=1
 
 echo "packer: ipv4 forwarding"
 cp /etc/sysctl.conf /tmp/
