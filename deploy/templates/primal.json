@@ -1,16 +1,23 @@
 {
   "variables": {
+    "SOURCE_AMI": "ami-116d857a",
+    "INSTANCE_TYPE": "t2.micro",
     "INSTANCE_USER": "admin",
+    "VPC_ID": null,
+    "SUBNET_ID": null,
     "NVM_VERSION": "v0.24.0",
     "NODE_VERSION": "0.10"
   },
   "builders": [{
     "type": "amazon-ebs",
     "region": "us-east-1",
-    "source_ami": "ami-22de994a",
-    "instance_type": "t1.micro",
+    "vpc_id": "{{user `VPC_ID`}}",
+    "subnet_id": "{{user `SUBNET_ID`}}",
+    "associate_public_ip_address": true,
+    "instance_type": "{{user `INSTANCE_TYPE`}}",
     "ssh_username": "{{user `INSTANCE_USER`}}",
-    "ami_name": "baal-primal {{timestamp}}"
+    "ami_name": "baal-primal {{timestamp}}",
+    "source_ami": "{{user `SOURCE_AMI`}}"
   }],
   "provisioners": [{
     "type": "file",

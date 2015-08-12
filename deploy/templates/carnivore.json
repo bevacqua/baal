@@ -1,18 +1,24 @@
 {
   "variables": {
-    "NODE_ENV": "staging",
-    "SERVER_NAME": "baal.com",
+    "SOURCE_AMI": null,
+    "INSTANCE_TYPE": "t2.micro",
     "INSTANCE_USER": "admin",
-    "NGINX_WORKERS": "4",
-    "SOURCE_ID": null
+    "VPC_ID": null,
+    "SUBNET_ID": null,
+    "SERVER_NAME": "baal.com",
+    "NODE_ENV": "staging",
+    "NGINX_WORKERS": "4"
   },
   "builders": [{
     "type": "amazon-ebs",
     "region": "us-east-1",
-    "instance_type": "t1.micro",
+    "vpc_id": "{{user `VPC_ID`}}",
+    "subnet_id": "{{user `SUBNET_ID`}}",
+    "associate_public_ip_address": true,
+    "instance_type": "{{user `INSTANCE_TYPE`}}",
     "ssh_username": "{{user `INSTANCE_USER`}}",
     "ami_name": "baal-carnivore-{{user `NODE_ENV`}} {{timestamp}}",
-    "source_ami": "{{user `SOURCE_ID`}}"
+    "source_ami": "{{user `SOURCE_AMI`}}"
   }],
   "provisioners": [{
     "type": "file",
