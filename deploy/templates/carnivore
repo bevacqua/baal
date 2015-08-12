@@ -43,6 +43,3 @@ npm install --prefix $HOME/app/server --production
 
 echo "packer: booting appserver daemon..."
 sudo service $NAME start
-
-echo "packer: setting up article scheduler cron job"
-crontab -l | { cat; echo "*/6 * * * * curl http://localhost:3000/api/scheduler"; } | crontab -
